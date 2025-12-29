@@ -398,7 +398,7 @@ def create_timer_display(session: Session, elapsed_minutes: int, remaining_minut
         f"[cyan]{bar}[/cyan]",
         f"{elapsed_str} | {remaining_str}",
         "",
-        "[dim]Press Ctrl+C to stop session[/dim]"
+        "[dim]Press Ctrl+C for menu (stop/open resources/continue)[/dim]"
     ])
 
     return "\n".join(lines)

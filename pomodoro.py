@@ -15,6 +15,7 @@ from src.session import session_manager
 from src.tasks import task_manager
 from src.reporter import reporter
 from src.config import config
+from src.database import db
 from src import ui
 
 
@@ -387,7 +388,6 @@ class PomodoroCLI:
 
     def cmd_cleanup(self, args):
         """Delete recent sessions (for testing/cleanup)"""
-        from .database import db
 
         if args.all:
             if not Confirm.ask("Delete ALL sessions? This cannot be undone", default=False):
@@ -581,10 +581,11 @@ class PomodoroCLI:
             console.print("\n")
             console.print("[bold]Session Menu:[/bold]")
             console.print("  [cyan]s[/cyan] - Stop session")
-            console.print("  [cyan]r[/cyan] - Open resource")
+            console.print("  [cyan]r[/cyan] - Open resource(s)")
+            console.print("  [cyan]a[/cyan] - Add resource to task")
             console.print("  [cyan]c[/cyan] - Continue (go back to timer)")
 
-            choice = Prompt.ask("Select", choices=['s', 'r', 'c'], default='c').lower()
+            choice = Prompt.ask("Select", choices=['s', 'r', 'a', 'c'], default='c').lower()
 
             if choice == 's':
                 self.cmd_stop(argparse.Namespace())
@@ -598,17 +599,41 @@ class PomodoroCLI:
                             icon = res.display_icon()
                             console.print(f"  {idx}. {icon} {res.value}")
 
-                        res_choice = Prompt.ask("\nOpen which resource? [1-{} or Enter to cancel]".format(len(resources)), default="").strip()
+                        res_choice = Prompt.ask("\nOpen which? [1-{}, 'all', or '1,2,3' or Enter to cancel]".format(len(resources)), default="").strip()
 
                         if res_choice:
-                            try:
-                                res_idx = int(res_choice)
-                                if 1 <= res_idx <= len(resources):
-                                    ui.open_resource(resources[res_idx - 1])
-                            except ValueError:
-                                pass
+                            indices_to_open = []
+
+                            if res_choice.lower() == 'all':
+                                indices_to_open = list(range(len(resources)))
+                            else:
+                                try:
+                                    # Parse comma-separated numbers
+                                    for part in res_choice.split(','):
+                                        idx = int(part.strip()) - 1
+                                        if 0 <= idx < len(resources):
+                                            indices_to_open.append(idx)
+                                except ValueError:
+                                    ui.print_error("Invalid selection")
+
+                            # Open selected resources
+                            for idx in indices_to_open:
+                                ui.open_resource(resources[idx])
                     else:
                         ui.print_info("This task has no resources")
+                else:
+                    ui.print_info("No task associated with this session")
+
+                # Go back to timer
+                console.print("\n[dim]Resuming session...[/dim]")
+                time.sleep(1)
+                self.live_session_display()
+            elif choice == 'a':
+                # Add resource to current task
+                if session_manager.current_session and session_manager.current_session.task_id:
+                    console.print("\n[bold]Add Resource:[/bold]")
+                    ui.prompt_add_resources(session_manager.current_session.task_id)
+                    ui.print_success("Resource(s) added")
                 else:
                     ui.print_info("No task associated with this session")
 
