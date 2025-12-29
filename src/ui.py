@@ -32,12 +32,17 @@ def open_resource(resource: TaskResource):
         # Handle URLs
         if resource.type == 'url':
             if platform.system() == 'Windows':
-                os.startfile(value)
+                try:
+                    os.startfile(value)
+                    print_success(f"Opening URL: {value}")
+                except Exception as e:
+                    print_error(f"Could not open URL: {e}")
             elif platform.system() == 'Darwin':  # macOS
                 subprocess.run(['open', value])
+                print_success(f"Opening URL: {value}")
             else:  # Linux
                 subprocess.run(['xdg-open', value])
-            print_success(f"Opening URL: {value}")
+                print_success(f"Opening URL: {value}")
 
         # Handle files and folders
         elif resource.type in ['file', 'folder']:
@@ -45,17 +50,23 @@ def open_resource(resource: TaskResource):
 
             if not path.exists():
                 print_warning(f"Path does not exist: {value}")
+                print_info(f"Looking for: {path.absolute()}")
                 return
 
             if platform.system() == 'Windows':
-                os.startfile(str(path))
+                try:
+                    os.startfile(str(path))
+                    resource_type_str = "folder" if resource.type == 'folder' else "file"
+                    print_success(f"Opening {resource_type_str}: {value}")
+                except Exception as e:
+                    print_error(f"Could not open {resource.type}: {e}")
+                    print_info(f"Tried to open: {path.absolute()}")
             elif platform.system() == 'Darwin':  # macOS
                 subprocess.run(['open', str(path)])
+                print_success(f"Opening: {value}")
             else:  # Linux
                 subprocess.run(['xdg-open', str(path)])
-
-            resource_type_str = "folder" if resource.type == 'folder' else "file"
-            print_success(f"Opening {resource_type_str}: {value}")
+                print_success(f"Opening: {value}")
 
         # Handle notes (just display them)
         elif resource.type == 'note':
@@ -63,6 +74,8 @@ def open_resource(resource: TaskResource):
 
     except Exception as e:
         print_error(f"Could not open resource: {e}")
+        import traceback
+        print_error(traceback.format_exc())
 
 
 def print_error(message: str):
@@ -344,8 +357,8 @@ def prompt_file_selection(files: List[Dict]) -> Optional[str]:
         return None
 
 
-def create_timer_display(session: Session, elapsed_minutes: int, remaining_minutes: int) -> Panel:
-    """Create live timer display panel"""
+def create_timer_display(session: Session, elapsed_minutes: int, remaining_minutes: int) -> str:
+    """Create live timer display (plain text for CMD compatibility)"""
     target = session.target_minutes
     progress_pct = min(100, (elapsed_minutes / target) * 100) if target > 0 else 0
 
@@ -369,7 +382,9 @@ def create_timer_display(session: Session, elapsed_minutes: int, remaining_minut
     task_name = session.task_description or "Ad-hoc work"
 
     lines = [
-        f"[bold cyan]{task_name}[/bold cyan]",
+        "[bold cyan]" + "=" * 60 + "[/bold cyan]",
+        f"[bold cyan]CURRENT SESSION: {task_name}[/bold cyan]",
+        "[bold cyan]" + "=" * 60 + "[/bold cyan]",
         ""
     ]
 
@@ -386,13 +401,7 @@ def create_timer_display(session: Session, elapsed_minutes: int, remaining_minut
         "[dim]Press Ctrl+C to stop session[/dim]"
     ])
 
-    return Panel(
-        "\n".join(lines),
-        box=box.DOUBLE,
-        border_style="cyan",
-        title="Current Session",
-        title_align="left"
-    )
+    return "\n".join(lines)
 
 
 def display_session_complete(session: Session, elapsed_minutes: int):

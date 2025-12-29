@@ -422,11 +422,9 @@ class PomodoroCLI:
         if not session_manager.current_session:
             return
 
-        # Clear screen once for clean display (especially important for CMD)
-        console.clear()
-
         try:
-            with Live(console=console, refresh_per_second=1, transient=False) as live:
+            # Don't clear screen - let it scroll naturally with history
+            with Live(console=console, refresh_per_second=1, transient=False, vertical_overflow="visible") as live:
                 while session_manager.current_session:
                     # Check for sleep gap
                     gap = session_manager.check_for_sleep_gap()
@@ -443,7 +441,6 @@ class PomodoroCLI:
                             self.cmd_stop(argparse.Namespace())
                             return
 
-                        console.clear()
                         live.start()
 
                     # Update tick
@@ -475,7 +472,6 @@ class PomodoroCLI:
                             return
                         elif choice == 'c':
                             self.cmd_extend(argparse.Namespace(minutes=25))
-                            console.clear()
                             live.start()
                         elif choice == 's':
                             self.cmd_stop(argparse.Namespace())
@@ -497,7 +493,6 @@ class PomodoroCLI:
                                 self.cmd_stop(argparse.Namespace())
                                 return
 
-                            console.clear()
                             live.start()
 
                     time.sleep(1)
