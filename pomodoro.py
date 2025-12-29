@@ -211,7 +211,20 @@ class PomodoroCLI:
             ui.print_error("No active session")
             return
 
-        # Get outcome
+        # Ask whether to log or discard
+        console.print("\n[bold]End Session:[/bold]")
+        console.print("  [cyan]l[/cyan] - Log session (save with outcome)")
+        console.print("  [cyan]d[/cyan] - Discard session (don't save)")
+
+        action = Prompt.ask("Select", choices=['l', 'd'], default='l').lower()
+
+        if action == 'd':
+            # Discard session
+            session = session_manager.cancel_session()
+            ui.print_info("Session discarded (not logged)")
+            return
+
+        # Log session - get outcome
         outcome = Prompt.ask("\nWhat did you actually accomplish?", default="")
 
         # Get modified files
