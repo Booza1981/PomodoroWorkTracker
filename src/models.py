@@ -65,14 +65,14 @@ class TaskResource:
         )
 
     def display_icon(self) -> str:
-        """Get emoji icon for resource type"""
+        """Get icon for resource type (ASCII for CMD compatibility)"""
         icons = {
-            'file': '📄',
-            'folder': '📁',
-            'url': '🔗',
-            'note': '💡'
+            'file': '[FILE]',
+            'folder': '[DIR]',
+            'url': '[URL]',
+            'note': '[NOTE]'
         }
-        return icons.get(self.type, '📎')
+        return icons.get(self.type, '[?]')
 
 
 @dataclass
