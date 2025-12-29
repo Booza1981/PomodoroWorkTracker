@@ -579,8 +579,46 @@ class PomodoroCLI:
 
         except KeyboardInterrupt:
             console.print("\n")
-            if Confirm.ask("Stop current session?", default=False):
+            console.print("[bold]Session Menu:[/bold]")
+            console.print("  [cyan]s[/cyan] - Stop session")
+            console.print("  [cyan]r[/cyan] - Open resource")
+            console.print("  [cyan]c[/cyan] - Continue (go back to timer)")
+
+            choice = Prompt.ask("Select", choices=['s', 'r', 'c'], default='c').lower()
+
+            if choice == 's':
                 self.cmd_stop(argparse.Namespace())
+            elif choice == 'r':
+                # Get task resources
+                if session_manager.current_session and session_manager.current_session.task_id:
+                    resources = task_manager.get_task_resources(session_manager.current_session.task_id)
+                    if resources:
+                        console.print("\n[bold]Resources:[/bold]")
+                        for idx, res in enumerate(resources, 1):
+                            icon = res.display_icon()
+                            console.print(f"  {idx}. {icon} {res.value}")
+
+                        res_choice = Prompt.ask("\nOpen which resource? [1-{} or Enter to cancel]".format(len(resources)), default="").strip()
+
+                        if res_choice:
+                            try:
+                                res_idx = int(res_choice)
+                                if 1 <= res_idx <= len(resources):
+                                    ui.open_resource(resources[res_idx - 1])
+                            except ValueError:
+                                pass
+                    else:
+                        ui.print_info("This task has no resources")
+                else:
+                    ui.print_info("No task associated with this session")
+
+                # Go back to timer
+                console.print("\n[dim]Resuming session...[/dim]")
+                time.sleep(1)
+                self.live_session_display()
+            elif choice == 'c':
+                # Continue - restart live display
+                self.live_session_display()
 
     def check_idle_warning(self):
         """Check if idle warning should be shown"""
