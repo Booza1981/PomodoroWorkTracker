@@ -24,6 +24,86 @@ from .config import config
 console = Console()
 
 
+def prompt_open_resources(task: Task, resources: List[TaskResource]) -> bool:
+    """
+    Prompt user to select and open resources (supports single, multiple, or all)
+
+    Args:
+        task: Task object (for accessing task URL)
+        resources: List of TaskResource objects
+
+    Returns:
+        True if user opened something, False if cancelled
+    """
+    if not resources and not task.url:
+        print_info("This task has no resources or URL")
+        return False
+
+    console.print("\n[bold]Available to open:[/bold]")
+
+    # Show task URL first if available
+    url_option = None
+    if task.url:
+        console.print(f"  0. [URL] Task link ({task.source or 'external'})")
+        url_option = 0
+
+    # Show resources
+    for idx, res in enumerate(resources, 1):
+        icon = res.display_icon()
+        console.print(f"  {idx}. {icon} {res.value}")
+
+    max_num = len(resources)
+    prompt_text = f"\nOpen which? [0-{max_num}, 'all', or '1,2,3' or Enter to skip]" if url_option is not None else f"\nOpen which? [1-{max_num}, 'all', or '1,2,3' or Enter to skip]"
+
+    choice = Prompt.ask(prompt_text, default="").strip()
+
+    if not choice:
+        return False
+
+    indices_to_open = []
+    open_url = False
+
+    if choice.lower() == 'all':
+        if url_option is not None:
+            open_url = True
+        indices_to_open = list(range(len(resources)))
+    else:
+        try:
+            # Parse comma-separated numbers
+            for part in choice.split(','):
+                idx = int(part.strip())
+                if idx == 0 and url_option is not None:
+                    open_url = True
+                elif 1 <= idx <= len(resources):
+                    indices_to_open.append(idx - 1)
+        except ValueError:
+            print_error("Invalid selection")
+            return False
+
+    # Open task URL if selected
+    if open_url and task.url:
+        try:
+            import os
+            import platform
+            import subprocess
+
+            if platform.system() == 'Windows':
+                os.startfile(task.url)
+            elif platform.system() == 'Darwin':
+                subprocess.run(['open', task.url])
+            else:
+                subprocess.run(['xdg-open', task.url])
+            print_success(f"Opening task link: {task.url}")
+        except Exception as e:
+            print_error(f"Could not open task URL: {e}")
+
+    # Open selected resources
+    for idx in indices_to_open:
+        open_resource(resources[idx])
+
+    return len(indices_to_open) > 0 or open_url
+
+
 def open_resource(resource: TaskResource):
     """Open a resource (file, folder, or URL) in the default application"""
     try:
@@ -214,20 +294,9 @@ def display_task_details(task: Task, resources: List[TaskResource], recent_sessi
 
     console.print(panel)
 
-    # Prompt to open resource
-    if show_open_prompt and resources:
-        choice = Prompt.ask(
-            "\nOpen a resource? [1-{} or Enter to skip]".format(len(resources)),
-            default=""
-        ).strip()
-
-        if choice:
-            try:
-                idx = int(choice)
-                if 1 <= idx <= len(resources):
-                    open_resource(resources[idx - 1])
-            except ValueError:
-                pass
+    # Prompt to open resources (supports multiple/all/task URL)
+    if show_open_prompt and (resources or task.url):
+        prompt_open_resources(task, resources)
 
 
 def prompt_create_task() -> Dict[str, str]:

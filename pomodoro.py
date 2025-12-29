@@ -250,6 +250,26 @@ class PomodoroCLI:
             file_count = len(files_to_log.split(','))
             console.print(f"   Files: {file_count} file(s) logged")
 
+        # Prompt to open task URL (Planner/To Do) to update
+        if session.task_id:
+            task = task_manager.get_task(session.task_id)
+            if task and task.url:
+                if Confirm.ask(f"\nOpen {task.source or 'task'} link to update?", default=False):
+                    import os
+                    import platform
+                    import subprocess
+
+                    try:
+                        if platform.system() == 'Windows':
+                            os.startfile(task.url)
+                        elif platform.system() == 'Darwin':
+                            subprocess.run(['open', task.url])
+                        else:
+                            subprocess.run(['xdg-open', task.url])
+                        ui.print_success(f"Opening task link")
+                    except Exception as e:
+                        ui.print_error(f"Could not open task URL: {e}")
+
     def cmd_status(self, args):
         """Show current session status"""
         if not session_manager.current_session:
@@ -603,37 +623,11 @@ class PomodoroCLI:
             if choice == 's':
                 self.cmd_stop(argparse.Namespace())
             elif choice == 'r':
-                # Get task resources
+                # Open resources using shared function
                 if session_manager.current_session and session_manager.current_session.task_id:
+                    task = task_manager.get_task(session_manager.current_session.task_id)
                     resources = task_manager.get_task_resources(session_manager.current_session.task_id)
-                    if resources:
-                        console.print("\n[bold]Resources:[/bold]")
-                        for idx, res in enumerate(resources, 1):
-                            icon = res.display_icon()
-                            console.print(f"  {idx}. {icon} {res.value}")
-
-                        res_choice = Prompt.ask("\nOpen which? [1-{}, 'all', or '1,2,3' or Enter to cancel]".format(len(resources)), default="").strip()
-
-                        if res_choice:
-                            indices_to_open = []
-
-                            if res_choice.lower() == 'all':
-                                indices_to_open = list(range(len(resources)))
-                            else:
-                                try:
-                                    # Parse comma-separated numbers
-                                    for part in res_choice.split(','):
-                                        idx = int(part.strip()) - 1
-                                        if 0 <= idx < len(resources):
-                                            indices_to_open.append(idx)
-                                except ValueError:
-                                    ui.print_error("Invalid selection")
-
-                            # Open selected resources
-                            for idx in indices_to_open:
-                                ui.open_resource(resources[idx])
-                    else:
-                        ui.print_info("This task has no resources")
+                    ui.prompt_open_resources(task, resources)
                 else:
                     ui.print_info("No task associated with this session")
 
