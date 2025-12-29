@@ -107,6 +107,12 @@ class PomodoroCLI:
         config_parser = subparsers.add_parser('config', help='Show configuration')
         config_parser.set_defaults(func=self.cmd_config)
 
+        # Session cleanup command
+        cleanup_parser = subparsers.add_parser('cleanup', help='Delete recent sessions')
+        cleanup_parser.add_argument('--all', action='store_true', help='Delete all sessions')
+        cleanup_parser.add_argument('--last', type=int, metavar='N', help='Delete last N sessions')
+        cleanup_parser.set_defaults(func=self.cmd_cleanup)
+
         return parser
 
     # Command implementations
@@ -140,7 +146,7 @@ class PomodoroCLI:
         if task:
             resources = task_manager.get_task_resources(task.id)
             recent_sessions = task_manager.get_task_sessions(task.id, limit=3)
-            ui.display_task_details(task, resources, recent_sessions, show_open_prompt=False)
+            ui.display_task_details(task, resources, recent_sessions, show_open_prompt=True)
 
         # Get intent
         intent = Prompt.ask("\nWhat are you trying to accomplish?", default="")
@@ -379,6 +385,80 @@ class PomodoroCLI:
         console.print(f"Default pomodoro: {config.default_pomodoro_minutes} minutes")
         console.print(f"Idle warning: {config.idle_warning_minutes} minutes")
 
+    def cmd_cleanup(self, args):
+        """Delete recent sessions (for testing/cleanup)"""
+        from .database import db
+
+        if args.all:
+            if not Confirm.ask("Delete ALL sessions? This cannot be undone", default=False):
+                return
+
+            result = db.execute("DELETE FROM sessions")
+            ui.print_success(f"Deleted all sessions")
+
+        elif args.last:
+            # Get last N session IDs
+            rows = db.fetch_all("""
+                SELECT id FROM sessions
+                ORDER BY start_time DESC
+                LIMIT ?
+            """, (args.last,))
+
+            if not rows:
+                ui.print_info("No sessions to delete")
+                return
+
+            session_ids = [row['id'] for row in rows]
+            ui.print_info(f"Found {len(session_ids)} recent sessions")
+
+            if not Confirm.ask(f"Delete these {len(session_ids)} sessions?", default=True):
+                return
+
+            placeholders = ','.join('?' * len(session_ids))
+            db.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", tuple(session_ids))
+            ui.print_success(f"Deleted {len(session_ids)} sessions")
+
+        else:
+            # Interactive: show recent sessions and let user select
+            rows = db.fetch_all("""
+                SELECT id, task_description, start_time, duration_minutes, status
+                FROM sessions
+                ORDER BY start_time DESC
+                LIMIT 10
+            """)
+
+            if not rows:
+                ui.print_info("No recent sessions")
+                return
+
+            console.print("\n[bold]Recent Sessions:[/bold]")
+            for idx, row in enumerate(rows, 1):
+                start = datetime.fromisoformat(row['start_time'])
+                task = row['task_description'] or "Ad-hoc"
+                duration = row['duration_minutes'] or 0
+                status = row['status']
+                console.print(f"  {idx}. {start.strftime('%Y-%m-%d %H:%M')} - {task} ({duration}m) [{status}]")
+
+            choice = Prompt.ask("\nDelete which sessions? (e.g., '1,2,3' or 'all' or Enter to cancel)", default="")
+
+            if not choice:
+                return
+
+            if choice.lower() == 'all':
+                session_ids = [row['id'] for row in rows]
+            else:
+                try:
+                    indices = [int(x.strip()) for x in choice.split(',')]
+                    session_ids = [rows[i-1]['id'] for i in indices if 1 <= i <= len(rows)]
+                except (ValueError, IndexError):
+                    ui.print_error("Invalid selection")
+                    return
+
+            if session_ids:
+                placeholders = ','.join('?' * len(session_ids))
+                db.execute(f"DELETE FROM sessions WHERE id IN ({placeholders})", tuple(session_ids))
+                ui.print_success(f"Deleted {len(session_ids)} sessions")
+
     # Interactive mode and live display
 
     def interactive_mode(self):
@@ -575,6 +655,9 @@ class PomodoroCLI:
 
 [bold]Other:[/bold]
   config             Show current configuration
+  cleanup            Delete test/old sessions (interactive)
+  cleanup --last N   Delete last N sessions
+  cleanup --all      Delete ALL sessions
   help               Show this help
   quit               Exit
         """)
