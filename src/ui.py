@@ -1,7 +1,11 @@
 """Rich UI components for terminal interface"""
 
+import os
+import subprocess
+import platform
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -18,6 +22,47 @@ from .config import config
 
 
 console = Console()
+
+
+def open_resource(resource: TaskResource):
+    """Open a resource (file, folder, or URL) in the default application"""
+    try:
+        value = resource.value
+
+        # Handle URLs
+        if resource.type == 'url':
+            if platform.system() == 'Windows':
+                os.startfile(value)
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.run(['open', value])
+            else:  # Linux
+                subprocess.run(['xdg-open', value])
+            print_success(f"Opening URL: {value}")
+
+        # Handle files and folders
+        elif resource.type in ['file', 'folder']:
+            path = Path(value)
+
+            if not path.exists():
+                print_warning(f"Path does not exist: {value}")
+                return
+
+            if platform.system() == 'Windows':
+                os.startfile(str(path))
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.run(['open', str(path)])
+            else:  # Linux
+                subprocess.run(['xdg-open', str(path)])
+
+            resource_type_str = "folder" if resource.type == 'folder' else "file"
+            print_success(f"Opening {resource_type_str}: {value}")
+
+        # Handle notes (just display them)
+        elif resource.type == 'note':
+            console.print(f"\n[cyan]Note:[/cyan] {value}")
+
+    except Exception as e:
+        print_error(f"Could not open resource: {e}")
 
 
 def print_error(message: str):
@@ -106,7 +151,7 @@ def prompt_task_selection(tasks: List[Task], allow_new: bool = True, allow_none:
         print_error("Invalid selection. Try again.")
 
 
-def display_task_details(task: Task, resources: List[TaskResource], recent_sessions: List[Session]):
+def display_task_details(task: Task, resources: List[TaskResource], recent_sessions: List[Session], show_open_prompt: bool = True):
     """Display detailed task information"""
     lines = []
 
@@ -120,9 +165,9 @@ def display_task_details(task: Task, resources: List[TaskResource], recent_sessi
     # Resources
     if resources:
         lines.append("\n[bold]Resources:[/bold]")
-        for res in resources:
+        for idx, res in enumerate(resources, 1):
             icon = res.display_icon()
-            lines.append(f"  {icon} {res.value}")
+            lines.append(f"  {idx}. {icon} {res.value}")
             if res.description:
                 lines.append(f"     [dim]{res.description}[/dim]")
 
@@ -155,6 +200,21 @@ def display_task_details(task: Task, resources: List[TaskResource], recent_sessi
     )
 
     console.print(panel)
+
+    # Prompt to open resource
+    if show_open_prompt and resources:
+        choice = Prompt.ask(
+            "\nOpen a resource? [1-{} or Enter to skip]".format(len(resources)),
+            default=""
+        ).strip()
+
+        if choice:
+            try:
+                idx = int(choice)
+                if 1 <= idx <= len(resources):
+                    open_resource(resources[idx - 1])
+            except ValueError:
+                pass
 
 
 def prompt_create_task() -> Dict[str, str]:

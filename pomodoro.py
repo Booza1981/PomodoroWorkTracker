@@ -28,6 +28,7 @@ class PomodoroCLI:
         self.running = True
         self.last_idle_check = datetime.now()
         self.last_long_session_check = datetime.now()
+        self.shown_startup_prompt = False
 
     def run(self, args):
         """Main entry point"""
@@ -139,19 +140,44 @@ class PomodoroCLI:
         if task:
             resources = task_manager.get_task_resources(task.id)
             recent_sessions = task_manager.get_task_sessions(task.id, limit=3)
-            ui.display_task_details(task, resources, recent_sessions)
+            ui.display_task_details(task, resources, recent_sessions, show_open_prompt=False)
 
         # Get intent
         intent = Prompt.ask("\nWhat are you trying to accomplish?", default="")
 
-        # Get working directory
-        default_dir = str(Path.cwd())
+        # Get working directory for file tracking
         working_dir = None
 
         if config.show_file_tracking:
-            console.print(f"\nWorking directory: [cyan]{default_dir}[/cyan]")
-            if Confirm.ask("Track files in this directory?", default=True):
-                working_dir = default_dir
+            # Get folder resources from task if available
+            folder_resources = []
+            if task:
+                resources = task_manager.get_task_resources(task.id)
+                folder_resources = [r for r in resources if r.type == 'folder']
+
+            if folder_resources:
+                console.print("\n[bold]Track files in which directory?[/bold]")
+                for idx, res in enumerate(folder_resources, 1):
+                    console.print(f"  {idx}. {res.value}")
+                console.print(f"  {len(folder_resources) + 1}. Other directory")
+                console.print("  [Enter] Skip file tracking")
+
+                choice = Prompt.ask("Select", default="").strip()
+
+                if choice:
+                    try:
+                        choice_idx = int(choice)
+                        if 1 <= choice_idx <= len(folder_resources):
+                            working_dir = folder_resources[choice_idx - 1].value
+                        elif choice_idx == len(folder_resources) + 1:
+                            working_dir = Prompt.ask("Enter directory path")
+                    except ValueError:
+                        pass
+            else:
+                # No folder resources, ask for directory
+                if Confirm.ask("\nTrack files in a directory?", default=False):
+                    default_dir = str(Path.cwd())
+                    working_dir = Prompt.ask("Directory path", default=default_dir)
 
         # Start session
         session = session_manager.start_session(
@@ -396,8 +422,11 @@ class PomodoroCLI:
         if not session_manager.current_session:
             return
 
+        # Clear screen once for clean display (especially important for CMD)
+        console.clear()
+
         try:
-            with Live(console=console, refresh_per_second=1) as live:
+            with Live(console=console, refresh_per_second=1, transient=False) as live:
                 while session_manager.current_session:
                     # Check for sleep gap
                     gap = session_manager.check_for_sleep_gap()
@@ -414,6 +443,7 @@ class PomodoroCLI:
                             self.cmd_stop(argparse.Namespace())
                             return
 
+                        console.clear()
                         live.start()
 
                     # Update tick
@@ -445,6 +475,7 @@ class PomodoroCLI:
                             return
                         elif choice == 'c':
                             self.cmd_extend(argparse.Namespace(minutes=25))
+                            console.clear()
                             live.start()
                         elif choice == 's':
                             self.cmd_stop(argparse.Namespace())
@@ -466,6 +497,7 @@ class PomodoroCLI:
                                 self.cmd_stop(argparse.Namespace())
                                 return
 
+                            console.clear()
                             live.start()
 
                     time.sleep(1)
@@ -491,7 +523,21 @@ class PomodoroCLI:
 
         # Get last session end time
         last_session = session_manager.get_last_session_time()
+
+        # If no previous session and we haven't shown startup prompt yet, show it
         if not last_session:
+            if not self.shown_startup_prompt:
+                self.shown_startup_prompt = True
+                console.print("\n[cyan]Ready to start working?[/cyan]")
+
+                choice = Prompt.ask("Start a session?", choices=['y', 'n', 's'], default='y').lower()
+
+                if choice == 'y':
+                    self.cmd_start(argparse.Namespace())
+                elif choice == 's':
+                    # Snooze for 30 minutes
+                    self.last_idle_check = now + timedelta(minutes=30)
+                    ui.print_info("Snoozed for 30 minutes")
             return
 
         # Calculate idle time
