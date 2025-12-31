@@ -17,6 +17,7 @@ from src.reporter import reporter
 from src.config import config
 from src.database import db
 from src import ui
+from src.system_monitor import idle_monitor, notifier
 
 
 console = Console()
@@ -30,6 +31,7 @@ class PomodoroCLI:
         self.last_idle_check = datetime.now()
         self.last_long_session_check = datetime.now()
         self.shown_startup_prompt = False
+        self.idle_notification_shown = False  # Track if notification was already shown
 
     def run(self, args):
         """Main entry point"""
@@ -192,6 +194,9 @@ class PomodoroCLI:
             intent=intent or None,
             working_directory=working_dir
         )
+
+        # Reset idle notification flag since user is now active
+        self.idle_notification_shown = False
 
         target_end = datetime.now() + timedelta(minutes=session.target_minutes)
         ui.print_success(
@@ -499,6 +504,17 @@ class PomodoroCLI:
         console.print("[bold cyan]Pomodoro Task Tracker[/bold cyan]")
         console.print("Type 'help' for commands, 'start' to begin a session, 'quit' to exit\n")
 
+        # Start background idle monitor
+        idle_monitor.start(self.idle_monitor_callback)
+
+        try:
+            self._interactive_loop()
+        finally:
+            # Stop idle monitor when exiting
+            idle_monitor.stop()
+
+    def _interactive_loop(self):
+        """Main interactive loop (separated for cleanup handling)"""
         while self.running:
             try:
                 # If there's an active session, show live display
@@ -700,6 +716,51 @@ class PomodoroCLI:
                 # Snooze for 30 minutes
                 self.last_idle_check = now + timedelta(minutes=30)
                 ui.print_info("Snoozed for 30 minutes")
+
+    def idle_monitor_callback(self):
+        """
+        Called by background idle monitor thread.
+        Checks idle status and triggers notifications if needed.
+        """
+        now = datetime.now()
+
+        # Only check during work hours
+        if not config.is_work_hours(now.time()):
+            # Reset notification flag outside work hours
+            self.idle_notification_shown = False
+            return
+
+        # Don't notify if there's an active session
+        if session_manager.current_session:
+            self.idle_notification_shown = False
+            return
+
+        # Get last session end time
+        last_session = session_manager.get_last_session_time()
+
+        # If no previous session, don't spam with notifications
+        # (will be handled by startup prompt in interactive mode)
+        if not last_session:
+            return
+
+        # Calculate idle time
+        idle_delta = now - last_session
+        idle_minutes = int(idle_delta.total_seconds() / 60)
+
+        # Check if idle threshold reached and notification not yet shown
+        if idle_minutes >= config.idle_warning_minutes and not self.idle_notification_shown:
+            # Show notification
+            notifier.show_notification(
+                title="Pomodoro Tracker",
+                message=f"You've been idle for {idle_minutes} minutes. Time to log some work?",
+                duration=10
+            )
+
+            # Flash taskbar
+            notifier.flash_taskbar(count=3)
+
+            # Mark notification as shown
+            self.idle_notification_shown = True
 
     def show_help(self):
         """Show help message"""
