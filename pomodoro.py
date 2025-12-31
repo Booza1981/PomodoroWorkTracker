@@ -32,6 +32,8 @@ class PomodoroCLI:
         self.last_long_session_check = datetime.now()
         self.shown_startup_prompt = False
         self.idle_notification_shown = False  # Track if notification was already shown
+        self.setup_start_time = None  # Track when session setup started
+        self.setup_notification_shown = False  # Track if setup reminder was shown
 
     def run(self, args):
         """Main entry point"""
@@ -126,6 +128,19 @@ class PomodoroCLI:
             ui.print_error("A session is already active. Stop it first with 'pomodoro stop'")
             return
 
+        # Mark that we're starting setup
+        self.setup_start_time = datetime.now()
+        self.setup_notification_shown = False
+
+        try:
+            self._start_session_flow()
+        finally:
+            # Clear setup tracking when done (whether successful or not)
+            self.setup_start_time = None
+            self.setup_notification_shown = False
+
+    def _start_session_flow(self):
+        """Handle the session start flow (separated for timeout tracking)"""
         # Get recent tasks
         recent_tasks = task_manager.get_recent_tasks(10)
 
@@ -723,6 +738,22 @@ class PomodoroCLI:
         Checks idle status and triggers notifications if needed.
         """
         now = datetime.now()
+
+        # Check if user is stuck in session setup
+        if self.setup_start_time:
+            setup_duration = (now - self.setup_start_time).total_seconds() / 60
+            setup_threshold = 2  # 2 minutes
+
+            if setup_duration >= setup_threshold and not self.setup_notification_shown:
+                # Show notification
+                notifier.show_notification(
+                    title="Pomodoro Tracker - Setup Incomplete",
+                    message=f"Still there? You started a session {int(setup_duration)} minutes ago but didn't finish the setup.",
+                    duration=10
+                )
+                notifier.flash_taskbar(count=5)
+                self.setup_notification_shown = True
+            return
 
         # Only check during work hours
         if not config.is_work_hours(now.time()):
