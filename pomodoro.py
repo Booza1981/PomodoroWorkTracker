@@ -607,6 +607,16 @@ class PomodoroCLI:
                     if session_manager.is_overtime() and elapsed == session_manager.current_session.target_minutes:
                         # Just hit the target
                         live.stop()
+
+                        # Notify user that session is complete
+                        task_name = session_manager.current_session.task_description or "Session"
+                        notifier.show_notification(
+                            title="Pomodoro Complete!",
+                            message=f"{task_name} - {elapsed} minutes completed. What's next?",
+                            duration=10
+                        )
+                        notifier.flash_taskbar(count=5)
+
                         ui.display_session_complete(session_manager.current_session, elapsed)
 
                         choice = Prompt.ask("Select", choices=['d', 'c', 's', 'b']).lower()
