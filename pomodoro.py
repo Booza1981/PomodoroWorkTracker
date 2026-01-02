@@ -32,8 +32,6 @@ class PomodoroCLI:
         self.last_long_session_check = datetime.now()
         self.shown_startup_prompt = False
         self.idle_notification_shown = False  # Track if notification was already shown
-        self.setup_start_time = None  # Track when session setup started
-        self.setup_notification_shown = False  # Track if setup reminder was shown
 
     def run(self, args):
         """Main entry point"""
@@ -128,102 +126,131 @@ class PomodoroCLI:
             ui.print_error("A session is already active. Stop it first with 'pomodoro stop'")
             return
 
-        # Mark that we're starting setup
-        self.setup_start_time = datetime.now()
-        self.setup_notification_shown = False
-
-        try:
-            self._start_session_flow()
-        finally:
-            # Clear setup tracking when done (whether successful or not)
-            self.setup_start_time = None
-            self.setup_notification_shown = False
+        self._start_session_flow()
 
     def _start_session_flow(self):
-        """Handle the session start flow (separated for timeout tracking)"""
-        # Get recent tasks
-        recent_tasks = task_manager.get_recent_tasks(10)
+        """Handle the session start flow with support for going back"""
+        console.print("\n[dim]Note: Setup questions will auto-complete after 3 minutes of inactivity[/dim]")
+        console.print("[dim]Type 'back' or 'b' at any question to go back to the previous step[/dim]\n")
 
-        # Prompt for task selection
-        task_idx = ui.prompt_task_selection(recent_tasks)
+        # Setup state machine
+        state = {
+            'step': 0,
+            'task': None,
+            'intent': '',
+            'working_dir': None
+        }
 
-        task = None
-        if task_idx == -1:
-            # Create new task
-            task_data = ui.prompt_create_task()
-            task = task_manager.create_task(**task_data)
-            ui.print_success(f"Task created: {task.display_name()}")
+        while True:
+            if state['step'] == 0:
+                # Step 0: Task selection
+                recent_tasks = task_manager.get_recent_tasks(10)
+                task_idx = ui.prompt_task_selection(recent_tasks)
 
-            # Add resources
-            ui.prompt_add_resources(task.id)
+                if task_idx == -1:
+                    # Create new task
+                    task_data = ui.prompt_create_task()
+                    state['task'] = task_manager.create_task(**task_data)
+                    ui.print_success(f"Task created: {state['task'].display_name()}")
+                    ui.prompt_add_resources(state['task'].id)
+                elif task_idx is not None:
+                    state['task'] = recent_tasks[task_idx]
 
-        elif task_idx is not None:
-            task = recent_tasks[task_idx]
+                # Show task details if selected
+                if state['task']:
+                    resources = task_manager.get_task_resources(state['task'].id)
+                    recent_sessions = task_manager.get_task_sessions(state['task'].id, limit=3)
+                    ui.display_task_details(state['task'], resources, recent_sessions, show_open_prompt=True)
 
-        # Show task details if selected
-        if task:
-            resources = task_manager.get_task_resources(task.id)
-            recent_sessions = task_manager.get_task_sessions(task.id, limit=3)
-            ui.display_task_details(task, resources, recent_sessions, show_open_prompt=True)
+                state['step'] = 1
 
-        # Get intent
-        intent = Prompt.ask("\nWhat are you trying to accomplish?", default="")
+            elif state['step'] == 1:
+                # Step 1: Get intent
+                intent_input = ui.TimeoutPrompt.ask("\nWhat are you trying to accomplish? (or 'back' to go back)", default="", timeout=180)
 
-        # Get working directory for file tracking
-        working_dir = None
+                if intent_input.lower() in ['back', 'b']:
+                    state['step'] = 0
+                    continue
 
-        if config.show_file_tracking:
-            # Get folder resources from task if available
-            folder_resources = []
-            if task:
-                resources = task_manager.get_task_resources(task.id)
-                folder_resources = [r for r in resources if r.type == 'folder']
+                state['intent'] = intent_input
+                state['step'] = 2
 
-            if folder_resources:
-                console.print("\n[bold]Track files in which directory?[/bold]")
-                for idx, res in enumerate(folder_resources, 1):
-                    console.print(f"  {idx}. {res.value}")
-                console.print(f"  {len(folder_resources) + 1}. Other directory")
-                console.print("  [Enter] Skip file tracking")
+            elif state['step'] == 2:
+                # Step 2: Get working directory for file tracking
+                if not config.show_file_tracking:
+                    # Skip to session start
+                    state['step'] = 3
+                    continue
 
-                choice = Prompt.ask("Select", default="").strip()
+                # Get folder resources from task if available
+                folder_resources = []
+                if state['task']:
+                    resources = task_manager.get_task_resources(state['task'].id)
+                    folder_resources = [r for r in resources if r.type == 'folder']
 
-                if choice:
-                    try:
-                        choice_idx = int(choice)
-                        if 1 <= choice_idx <= len(folder_resources):
-                            working_dir = folder_resources[choice_idx - 1].value
-                        elif choice_idx == len(folder_resources) + 1:
-                            working_dir = Prompt.ask("Enter directory path")
-                    except ValueError:
-                        pass
-            else:
-                # No folder resources, ask for directory
-                if Confirm.ask("\nTrack files in a directory?", default=False):
-                    default_dir = str(Path.cwd())
-                    working_dir = Prompt.ask("Directory path", default=default_dir)
+                if folder_resources:
+                    console.print("\n[bold]Track files in which directory?[/bold]")
+                    for idx, res in enumerate(folder_resources, 1):
+                        console.print(f"  {idx}. {res.value}")
+                    console.print(f"  {len(folder_resources) + 1}. Other directory")
+                    console.print("  [Enter] Skip file tracking")
+                    console.print("  [cyan]back[/cyan] Go to previous question")
 
-        # Start session
-        session = session_manager.start_session(
-            task=task,
-            intent=intent or None,
-            working_directory=working_dir
-        )
+                    choice = ui.TimeoutPrompt.ask("Select", default="", timeout=180).strip()
 
-        # Reset idle notification flag since user is now active
-        self.idle_notification_shown = False
+                    if choice.lower() in ['back', 'b']:
+                        state['step'] = 1
+                        continue
 
-        target_end = datetime.now() + timedelta(minutes=session.target_minutes)
-        ui.print_success(
-            f"Session started at {datetime.now().strftime('%H:%M')}\n"
-            f"   Target: {session.target_minutes} minutes (break at {target_end.strftime('%H:%M')})"
-        )
+                    if choice:
+                        try:
+                            choice_idx = int(choice)
+                            if 1 <= choice_idx <= len(folder_resources):
+                                state['working_dir'] = folder_resources[choice_idx - 1].value
+                            elif choice_idx == len(folder_resources) + 1:
+                                dir_input = ui.TimeoutPrompt.ask("Enter directory path (or 'back')", default="", timeout=180)
+                                if dir_input.lower() in ['back', 'b']:
+                                    continue  # Stay at step 2
+                                state['working_dir'] = dir_input
+                        except ValueError:
+                            pass
+                else:
+                    # No folder resources, ask for directory
+                    if Confirm.ask("\nTrack files in a directory?", default=False):
+                        default_dir = str(Path.cwd())
+                        dir_input = ui.TimeoutPrompt.ask("Directory path (or 'back' to go back)", default=default_dir, timeout=180)
 
-        if working_dir:
-            ui.print_info(f"Tracking: {working_dir}")
+                        if dir_input.lower() in ['back', 'b']:
+                            state['step'] = 1
+                            continue
 
-        # Enter live display mode
-        self.live_session_display()
+                        state['working_dir'] = dir_input
+
+                state['step'] = 3
+
+            elif state['step'] == 3:
+                # Final step: Start session
+                session = session_manager.start_session(
+                    task=state['task'],
+                    intent=state['intent'] or None,
+                    working_directory=state['working_dir']
+                )
+
+                # Reset idle notification flag since user is now active
+                self.idle_notification_shown = False
+
+                target_end = datetime.now() + timedelta(minutes=session.target_minutes)
+                ui.print_success(
+                    f"Session started at {datetime.now().strftime('%H:%M')}\n"
+                    f"   Target: {session.target_minutes} minutes (break at {target_end.strftime('%H:%M')})"
+                )
+
+                if state['working_dir']:
+                    ui.print_info(f"Tracking: {state['working_dir']}")
+
+                # Enter live display mode
+                self.live_session_display()
+                break
 
     def cmd_stop(self, args):
         """Stop current session"""
@@ -516,8 +543,8 @@ class PomodoroCLI:
 
     def interactive_mode(self):
         """Run in interactive mode with live display"""
-        console.print("[bold cyan]Pomodoro Task Tracker[/bold cyan]")
-        console.print("Type 'help' for commands, 'start' to begin a session, 'quit' to exit\n")
+        # Display welcome banner
+        ui.display_welcome()
 
         # Start background idle monitor
         idle_monitor.start(self.idle_monitor_callback)
@@ -657,9 +684,10 @@ class PomodoroCLI:
             console.print("  [cyan]s[/cyan] - Stop session")
             console.print("  [cyan]r[/cyan] - Open resource(s)")
             console.print("  [cyan]a[/cyan] - Add resource to task")
+            console.print("  [cyan]e[/cyan] - Edit resource")
             console.print("  [cyan]c[/cyan] - Continue (go back to timer)")
 
-            choice = Prompt.ask("Select", choices=['s', 'r', 'a', 'c'], default='c').lower()
+            choice = Prompt.ask("Select", choices=['s', 'r', 'a', 'e', 'c'], default='c').lower()
 
             if choice == 's':
                 self.cmd_stop(argparse.Namespace())
@@ -682,6 +710,18 @@ class PomodoroCLI:
                     console.print("\n[bold]Add Resource:[/bold]")
                     ui.prompt_add_resources(session_manager.current_session.task_id)
                     ui.print_success("Resource(s) added")
+                else:
+                    ui.print_info("No task associated with this session")
+
+                # Go back to timer
+                console.print("\n[dim]Resuming session...[/dim]")
+                time.sleep(1)
+                self.live_session_display()
+            elif choice == 'e':
+                # Edit resource in current task
+                if session_manager.current_session and session_manager.current_session.task_id:
+                    console.print("\n[bold]Edit Resource:[/bold]")
+                    ui.prompt_edit_resources(session_manager.current_session.task_id)
                 else:
                     ui.print_info("No task associated with this session")
 
@@ -748,22 +788,6 @@ class PomodoroCLI:
         Checks idle status and triggers notifications if needed.
         """
         now = datetime.now()
-
-        # Check if user is stuck in session setup
-        if self.setup_start_time:
-            setup_duration = (now - self.setup_start_time).total_seconds() / 60
-            setup_threshold = 2  # 2 minutes
-
-            if setup_duration >= setup_threshold and not self.setup_notification_shown:
-                # Show notification
-                notifier.show_notification(
-                    title="Pomodoro Tracker - Setup Incomplete",
-                    message=f"Still there? You started a session {int(setup_duration)} minutes ago but didn't finish the setup.",
-                    duration=10
-                )
-                notifier.flash_taskbar(count=5)
-                self.setup_notification_shown = True
-            return
 
         # Only check during work hours
         if not config.is_work_hours(now.time()):

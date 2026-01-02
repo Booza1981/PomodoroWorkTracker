@@ -202,6 +202,42 @@ class TaskManager:
 
         return [TaskResource.from_db_row(row) for row in rows]
 
+    def update_resource(
+        self,
+        resource_id: int,
+        resource_type: Optional[str] = None,
+        value: Optional[str] = None,
+        description: Optional[str] = None
+    ):
+        """
+        Update a task resource
+
+        Args:
+            resource_id: Resource ID
+            resource_type: Optional new resource type
+            value: Optional new value
+            description: Optional new description
+        """
+        updates = []
+        params = []
+
+        if resource_type is not None:
+            updates.append("type = ?")
+            params.append(resource_type)
+        if value is not None:
+            updates.append("value = ?")
+            params.append(value)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+
+        if not updates:
+            return
+
+        params.append(resource_id)
+        query = f"UPDATE task_resources SET {', '.join(updates)} WHERE id = ?"
+        db.execute(query, tuple(params))
+
     def delete_resource(self, resource_id: int):
         """Delete a task resource"""
         db.execute("DELETE FROM task_resources WHERE id = ?", (resource_id,))

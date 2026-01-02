@@ -3,6 +3,9 @@
 import os
 import subprocess
 import platform
+import sys
+import select
+import threading
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +25,62 @@ from .config import config
 
 
 console = Console()
+
+
+class TimeoutPrompt:
+    """Prompt with timeout support for session setup"""
+
+    @staticmethod
+    def ask(prompt_text: str, default: str = "", timeout: int = 180) -> str:
+        """
+        Prompt with timeout (auto-accepts default after timeout)
+
+        Args:
+            prompt_text: The prompt text
+            default: Default value to use if timeout or empty input
+            timeout: Timeout in seconds (default 180 = 3 minutes)
+
+        Returns:
+            User input or default value
+        """
+        # For Windows, we can't easily use select, so use threading
+        if platform.system() == 'Windows':
+            return TimeoutPrompt._ask_windows(prompt_text, default, timeout)
+        else:
+            return TimeoutPrompt._ask_unix(prompt_text, default, timeout)
+
+    @staticmethod
+    def _ask_windows(prompt_text: str, default: str, timeout: int) -> str:
+        """Windows implementation using threading"""
+        result = [None]
+        finished = threading.Event()
+
+        def input_thread():
+            try:
+                result[0] = Prompt.ask(prompt_text, default=default)
+            except:
+                result[0] = default
+            finally:
+                finished.set()
+
+        thread = threading.Thread(target=input_thread, daemon=True)
+        thread.start()
+
+        # Wait for either timeout or input
+        if finished.wait(timeout=timeout):
+            # User provided input
+            return result[0] if result[0] is not None else default
+        else:
+            # Timeout - return default
+            console.print(f"\n[dim](timed out - using default: '{default}')[/dim]")
+            return default
+
+    @staticmethod
+    def _ask_unix(prompt_text: str, default: str, timeout: int) -> str:
+        """Unix implementation using select"""
+        # For Unix systems, we could use select, but for simplicity
+        # let's use the same threading approach
+        return TimeoutPrompt._ask_windows(prompt_text, default, timeout)
 
 
 def prompt_open_resources(task: Task, resources: List[TaskResource]) -> bool:
@@ -370,6 +429,104 @@ def prompt_add_resources(task_id: int) -> bool:
     return True
 
 
+def prompt_edit_resources(task_id: int) -> bool:
+    """
+    Prompt to edit or delete resources from a task
+
+    Args:
+        task_id: Task ID
+
+    Returns:
+        True if any changes were made, False otherwise
+    """
+    from .tasks import task_manager
+
+    resources = task_manager.get_task_resources(task_id)
+
+    if not resources:
+        print_info("This task has no resources to edit")
+        return False
+
+    while True:
+        console.print("\n[bold]Current Resources:[/bold]")
+        for idx, res in enumerate(resources, 1):
+            icon = res.display_icon()
+            desc_str = f" - {res.description}" if res.description else ""
+            console.print(f"  {idx}. {icon} {res.value}{desc_str}")
+
+        console.print("\n[dim]Enter resource number to edit, 'd<number>' to delete (e.g., 'd1'), or Enter to finish[/dim]")
+        choice = Prompt.ask("Select", default="").strip().lower()
+
+        if not choice:
+            break
+
+        # Check if delete command
+        if choice.startswith('d'):
+            try:
+                idx = int(choice[1:])
+                if 1 <= idx <= len(resources):
+                    resource = resources[idx - 1]
+                    if Confirm.ask(f"Delete '{resource.value}'?", default=False):
+                        task_manager.delete_resource(resource.id)
+                        print_success("Resource deleted")
+                        # Refresh resources list
+                        resources = task_manager.get_task_resources(task_id)
+                        if not resources:
+                            print_info("No more resources to edit")
+                            return True
+                else:
+                    print_error("Invalid resource number")
+            except (ValueError, IndexError):
+                print_error("Invalid selection")
+            continue
+
+        # Edit resource
+        try:
+            idx = int(choice)
+            if 1 <= idx <= len(resources):
+                resource = resources[idx - 1]
+
+                console.print(f"\n[bold]Editing:[/bold] {resource.display_icon()} {resource.value}")
+                console.print("[dim]Press Enter to keep current value[/dim]")
+
+                # Edit type
+                console.print(f"\nCurrent type: {resource.type}")
+                console.print("Resource type: [cyan]file[/cyan], [cyan]folder[/cyan], [cyan]url[/cyan], [cyan]note[/cyan]")
+                new_type = Prompt.ask("New type", default=resource.type).lower()
+
+                if new_type not in ['file', 'folder', 'url', 'note']:
+                    print_error("Invalid type")
+                    continue
+
+                # Edit value
+                console.print(f"\nCurrent value: {resource.value}")
+                new_value = Prompt.ask("New value", default=resource.value)
+
+                # Edit description
+                current_desc = resource.description or ""
+                console.print(f"\nCurrent description: {current_desc if current_desc else '(none)'}")
+                new_description = Prompt.ask("New description", default=current_desc)
+
+                # Update resource
+                task_manager.update_resource(
+                    resource.id,
+                    resource_type=new_type if new_type != resource.type else None,
+                    value=new_value if new_value != resource.value else None,
+                    description=new_description if new_description != current_desc else None
+                )
+
+                print_success("Resource updated")
+
+                # Refresh resources list
+                resources = task_manager.get_task_resources(task_id)
+            else:
+                print_error("Invalid resource number")
+        except (ValueError, IndexError):
+            print_error("Invalid selection")
+
+    return True
+
+
 def prompt_file_selection(files: List[Dict]) -> Optional[str]:
     """
     Prompt user to select which files to log
@@ -467,7 +624,7 @@ def create_timer_display(session: Session, elapsed_minutes: int, remaining_minut
         f"[cyan]{bar}[/cyan]",
         f"{elapsed_str} | {remaining_str}",
         "",
-        "[dim]Press Ctrl+C for menu (stop/open resources/continue)[/dim]"
+        "[dim]Press Ctrl+C for menu (stop/open/add/edit resources/continue)[/dim]"
     ])
 
     return "\n".join(lines)
@@ -548,3 +705,46 @@ def display_report(content: str):
     """Display a report"""
     console.print("\n")
     console.print(Panel(content, box=box.ROUNDED, border_style="cyan"))
+
+
+def display_welcome():
+    """Display welcome banner with ASCII art and motivational message"""
+    import random
+
+    # ASCII art for pomodoro
+    ascii_art = """
+    [bold cyan]
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║                                                               ║
+    ║     ██████╗  ██████╗ ███╗   ███╗ ██████╗ ██████╗  ██████╗    ║
+    ║     ██╔══██╗██╔═══██╗████╗ ████║██╔═══██╗██╔══██╗██╔═══██╗   ║
+    ║     ██████╔╝██║   ██║██╔████╔██║██║   ██║██║  ██║██║   ██║   ║
+    ║     ██╔═══╝ ██║   ██║██║╚██╔╝██║██║   ██║██║  ██║██║   ██║   ║
+    ║     ██║     ╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██████╔╝╚██████╔╝   ║
+    ║     ╚═╝      ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═════╝  ╚═════╝    ║
+    ║                                                               ║
+    ║              [yellow]T A S K   T R A C K E R[/yellow]                        ║
+    ║                                                               ║
+    ╚═══════════════════════════════════════════════════════════════╝
+    [/bold cyan]"""
+
+    # Motivational messages
+    messages = [
+        "Focus on progress, not perfection!",
+        "One task at a time, one session at a time.",
+        "You've got this! Let's make today productive.",
+        "Small steps lead to big achievements.",
+        "Every pomodoro brings you closer to your goals.",
+        "Break down the work, build up your success.",
+        "Stay focused, stay brilliant!",
+        "Your future self will thank you for starting now.",
+        "Productivity is about intention and attention.",
+        "Today's effort is tomorrow's success!",
+        "Track your time, master your craft.",
+        "Consistent effort creates extraordinary results."
+    ]
+
+    # Display welcome banner
+    console.print(ascii_art)
+    console.print(f"\n[bold green]{random.choice(messages)}[/bold green]\n")
+    console.print("[dim]Type 'help' for commands, 'start' to begin a session, 'quit' to exit[/dim]\n")
