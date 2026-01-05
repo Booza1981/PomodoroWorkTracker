@@ -159,7 +159,7 @@ class PomodoroCLI:
                 # Show task details if selected
                 if state['task']:
                     resources = task_manager.get_task_resources(state['task'].id)
-                    recent_sessions = task_manager.get_task_sessions(state['task'].id, limit=3)
+                    recent_sessions = task_manager.get_task_sessions(state['task'].id, limit=3, include_all_statuses=False)
                     ui.display_task_details(state['task'], resources, recent_sessions, show_open_prompt=True)
 
                 state['step'] = 1
@@ -271,8 +271,13 @@ class PomodoroCLI:
             ui.print_info("Session discarded (not logged)")
             return
 
-        # Log session - get outcome
-        outcome = Prompt.ask("\nWhat did you actually accomplish?", default="")
+        # Log session - show intent first, then get outcome
+        if session_manager.current_session.intent:
+            console.print("\n[dim]What you were trying to accomplish:[/dim]")
+            console.print(f"  {session_manager.current_session.intent}")
+            console.print()
+
+        outcome = Prompt.ask("What did you actually accomplish?", default="")
 
         # Get modified files
         modified_files = session_manager.get_modified_files()
@@ -401,7 +406,7 @@ class PomodoroCLI:
             return
 
         resources = task_manager.get_task_resources(task.id)
-        recent_sessions = task_manager.get_task_sessions(task.id, limit=5)
+        recent_sessions = task_manager.get_task_sessions(task.id, limit=5, include_all_statuses=False)
 
         ui.display_task_details(task, resources, recent_sessions)
 
@@ -685,9 +690,10 @@ class PomodoroCLI:
             console.print("  [cyan]r[/cyan] - Open resource(s)")
             console.print("  [cyan]a[/cyan] - Add resource to task")
             console.print("  [cyan]e[/cyan] - Edit resource")
+            console.print("  [cyan]h[/cyan] - View session history")
             console.print("  [cyan]c[/cyan] - Continue (go back to timer)")
 
-            choice = Prompt.ask("Select", choices=['s', 'r', 'a', 'e', 'c'], default='c').lower()
+            choice = Prompt.ask("Select", choices=['s', 'r', 'a', 'e', 'h', 'c'], default='c').lower()
 
             if choice == 's':
                 self.cmd_stop(argparse.Namespace())
@@ -722,6 +728,17 @@ class PomodoroCLI:
                 if session_manager.current_session and session_manager.current_session.task_id:
                     console.print("\n[bold]Edit Resource:[/bold]")
                     ui.prompt_edit_resources(session_manager.current_session.task_id)
+                else:
+                    ui.print_info("No task associated with this session")
+
+                # Go back to timer
+                console.print("\n[dim]Resuming session...[/dim]")
+                time.sleep(1)
+                self.live_session_display()
+            elif choice == 'h':
+                # View session history for current task
+                if session_manager.current_session and session_manager.current_session.task_id:
+                    ui.prompt_session_history_viewer(session_manager.current_session.task_id)
                 else:
                     ui.print_info("No task associated with this session")
 
