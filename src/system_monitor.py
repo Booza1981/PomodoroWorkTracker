@@ -76,10 +76,10 @@ class WindowsNotifier:
             return
 
         try:
-            from win10toast import ToastNotifier
-            self.notifier = ToastNotifier()
+            from winotify import Notification
+            self.notifier = Notification
         except ImportError:
-            # win10toast not available, will skip notifications
+            # winotify not available, will skip notifications
             pass
 
     def show_notification(self, title: str, message: str, duration: int = 10):
@@ -97,13 +97,13 @@ class WindowsNotifier:
         try:
             def _show_toast():
                 try:
-                    # Run in this thread to avoid win10toast's nested threading issues.
-                    self.notifier.show_toast(
-                        title,
-                        message,
-                        duration=duration,
-                        threaded=False
+                    toast = self.notifier(
+                        app_id="Pomodoro Task Tracker",
+                        title=title,
+                        msg=message,
+                        duration="short" if duration <= 5 else "long"
                     )
+                    toast.show()
                 except Exception as e:
                     print(f"Notification error: {e}")
 
