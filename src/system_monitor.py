@@ -95,13 +95,20 @@ class WindowsNotifier:
             return False
 
         try:
+            def _show_toast():
+                try:
+                    # Run in this thread to avoid win10toast's nested threading issues.
+                    self.notifier.show_toast(
+                        title,
+                        message,
+                        duration=duration,
+                        threaded=False
+                    )
+                except Exception as e:
+                    print(f"Notification error: {e}")
+
             # Show notification in a separate thread to avoid blocking
-            thread = threading.Thread(
-                target=self.notifier.show_toast,
-                args=(title, message),
-                kwargs={'duration': duration, 'threaded': True},
-                daemon=True
-            )
+            thread = threading.Thread(target=_show_toast, daemon=True)
             thread.start()
             return True
         except Exception as e:
