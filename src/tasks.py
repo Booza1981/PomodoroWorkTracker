@@ -244,24 +244,33 @@ class TaskManager:
 
     # Task History
 
-    def get_task_sessions(self, task_id: int, limit: Optional[int] = None):
+    def get_task_sessions(self, task_id: int, limit: Optional[int] = None, include_all_statuses: bool = True):
         """
         Get all sessions for a task
 
         Args:
             task_id: Task ID
             limit: Optional limit on number of sessions
+            include_all_statuses: If True, include all sessions regardless of status.
+                                  If False, only include completed sessions.
 
         Returns:
             List of Session objects
         """
         from .models import Session
 
-        query = """
-            SELECT * FROM sessions
-            WHERE task_id = ? AND status = 'completed'
-            ORDER BY start_time DESC
-        """
+        if include_all_statuses:
+            query = """
+                SELECT * FROM sessions
+                WHERE task_id = ?
+                ORDER BY start_time DESC
+            """
+        else:
+            query = """
+                SELECT * FROM sessions
+                WHERE task_id = ? AND status = 'completed'
+                ORDER BY start_time DESC
+            """
         if limit:
             query += f" LIMIT {limit}"
 

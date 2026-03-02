@@ -327,9 +327,24 @@ def display_task_details(task: Task, resources: List[TaskResource], recent_sessi
     if task.notes:
         lines.append(f"\n[bold]Notes:[/bold]\n{task.notes}")
 
-    # Recent work
+    panel = Panel(
+        "\n".join(lines),
+        box=box.ROUNDED,
+        border_style="cyan"
+    )
+
+    console.print(panel)
+
+    # Recent work - display as table with full intent and outcome
     if recent_sessions:
-        lines.append("\n[bold]Recent work:[/bold]")
+        console.print("\n[bold]Recent work:[/bold]")
+
+        table = Table(show_header=True, box=box.SIMPLE, padding=(0, 1))
+        table.add_column("When", style="cyan", width=12)
+        table.add_column("Duration", style="dim", width=8)
+        table.add_column("Intent", style="white")
+        table.add_column("Outcome", style="green")
+
         for session in recent_sessions[:3]:
             start = session.get_start_datetime()
             duration = session.duration_minutes - session.paused_duration
@@ -342,20 +357,129 @@ def display_task_details(task: Task, resources: List[TaskResource], recent_sessi
             else:
                 when = f"{delta.days} days ago"
 
-            intent_summary = session.intent[:50] + "..." if session.intent and len(session.intent) > 50 else session.intent
-            lines.append(f"  • {when}: {intent_summary} ({duration}m)")
+            # Show full intent and outcome without truncation
+            intent_text = session.intent or "[dim]-[/dim]"
+            outcome_text = session.outcome or "[dim]-[/dim]"
 
-    panel = Panel(
-        "\n".join(lines),
-        box=box.ROUNDED,
-        border_style="cyan"
-    )
+            table.add_row(
+                when,
+                f"{duration}m",
+                intent_text,
+                outcome_text
+            )
 
-    console.print(panel)
+        console.print(table)
 
     # Prompt to open resources (supports multiple/all/task URL)
     if show_open_prompt and (resources or task.url):
         prompt_open_resources(task, resources)
+
+
+def display_session_history(sessions: List[Session], task_name: str = None):
+    """
+    Display session history in a table format
+
+    Args:
+        sessions: List of Session objects to display
+        task_name: Optional task name to display in header
+    """
+    if not sessions:
+        print_info("No session history available")
+        return
+
+    header = f"[bold]Session History{' for ' + task_name if task_name else ''}:[/bold]"
+    console.print(f"\n{header}")
+
+    table = Table(show_header=True, box=box.ROUNDED, padding=(0, 1))
+    table.add_column("#", style="cyan", width=4)
+    table.add_column("Date", style="white", width=16)
+    table.add_column("Duration", style="dim", width=8)
+    table.add_column("Intent", style="white")
+    table.add_column("Outcome", style="green")
+    table.add_column("Status", style="yellow", width=10)
+
+    for idx, session in enumerate(sessions, 1):
+        start = session.get_start_datetime()
+        duration = session.duration_minutes - session.paused_duration if session.duration_minutes else 0
+
+        # Format date
+        date_str = start.strftime('%Y-%m-%d %H:%M')
+
+        # Get intent and outcome
+        intent_text = session.intent or "[dim]-[/dim]"
+        outcome_text = session.outcome or "[dim]-[/dim]"
+
+        # Status with color
+        status = session.status
+        if status == 'completed':
+            status_display = "[green]completed[/green]"
+        elif status == 'cancelled':
+            status_display = "[red]cancelled[/red]"
+        else:
+            status_display = "[yellow]active[/yellow]"
+
+        table.add_row(
+            str(idx),
+            date_str,
+            f"{duration}m",
+            intent_text,
+            outcome_text,
+            status_display
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Total sessions: {len(sessions)}[/dim]")
+
+
+def prompt_session_history_viewer(task_id: int):
+    """
+    Interactive session history viewer with configurable limit
+
+    Args:
+        task_id: Task ID to show sessions for
+    """
+    from .tasks import task_manager
+
+    # Get task info
+    task = task_manager.get_task(task_id)
+    if not task:
+        print_error("Task not found")
+        return
+
+    # Ask how many sessions to display
+    console.print("\n[bold]View Session History[/bold]")
+    console.print("  [cyan]1[/cyan] - Last 5 sessions")
+    console.print("  [cyan]2[/cyan] - Last 10 sessions")
+    console.print("  [cyan]3[/cyan] - Last 20 sessions")
+    console.print("  [cyan]4[/cyan] - All sessions")
+    console.print("  [cyan]Enter[/cyan] - Cancel")
+
+    choice = Prompt.ask("Select", default="").strip()
+
+    if not choice:
+        return
+
+    # Determine limit
+    limit_map = {
+        '1': 5,
+        '2': 10,
+        '3': 20,
+        '4': None
+    }
+
+    limit = limit_map.get(choice)
+    if limit is None and choice != '4':
+        print_error("Invalid selection")
+        return
+
+    # Fetch sessions (including all statuses)
+    if limit:
+        sessions = task_manager.get_task_sessions(task_id, limit=limit)
+    else:
+        sessions = task_manager.get_task_sessions(task_id)
+
+    # Display
+    display_session_history(sessions, task.display_name())
 
 
 def prompt_create_task() -> Dict[str, str]:
@@ -614,9 +738,18 @@ def create_timer_display(session: Session, elapsed_minutes: int, remaining_minut
         ""
     ]
 
+    # Display full intent without truncation in a formatted box
     if session.intent:
-        intent_display = session.intent[:60] + "..." if len(session.intent) > 60 else session.intent
-        lines.append(f"[dim]Intent:[/dim] {intent_display}")
+        # Create a simple table for the intent to make it more readable
+        intent_table = Table(show_header=False, box=box.SIMPLE, padding=(0, 1), expand=True)
+        intent_table.add_column("Label", style="dim", width=10)
+        intent_table.add_column("Content", style="white")
+        intent_table.add_row("Intent:", session.intent)
+
+        # We need to convert the table to string to add to lines
+        # Since we can't easily do that, let's use a simpler format
+        lines.append(f"[dim]What you're trying to accomplish:[/dim]")
+        lines.append(f"  {session.intent}")
         lines.append("")
 
     lines.extend([
@@ -624,7 +757,7 @@ def create_timer_display(session: Session, elapsed_minutes: int, remaining_minut
         f"[cyan]{bar}[/cyan]",
         f"{elapsed_str} | {remaining_str}",
         "",
-        "[dim]Press Ctrl+C for menu (stop/open/add/edit resources/continue)[/dim]"
+        "[dim]Press Ctrl+C for menu (stop/open/add/edit resources/view history/continue)[/dim]"
     ])
 
     return "\n".join(lines)

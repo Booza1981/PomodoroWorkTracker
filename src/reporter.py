@@ -199,7 +199,7 @@ class Reporter:
         if not task:
             return "Task not found."
 
-        sessions = task_manager.get_task_sessions(task_id)
+        sessions = task_manager.get_task_sessions(task_id, include_all_statuses=False)
         total_time = task_manager.get_task_total_time(task_id)
 
         lines = [
