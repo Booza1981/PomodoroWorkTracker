@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from typing import Optional, Callable
 import platform
+import sys
 
 
 class IdleMonitor:
@@ -75,6 +76,12 @@ class WindowsNotifier:
         if platform.system() != 'Windows':
             return
 
+        # win10toast relies on an old ctypes callback path that can emit
+        # WNDPROC/LRESULT type errors on newer Python releases.
+        # In that case, disable toast notifications instead of crashing output.
+        if sys.version_info >= (3, 12):
+            return
+
         try:
             from win10toast import ToastNotifier
             self.notifier = ToastNotifier()
@@ -95,14 +102,7 @@ class WindowsNotifier:
             return False
 
         try:
-            # Show notification in a separate thread to avoid blocking
-            thread = threading.Thread(
-                target=self.notifier.show_toast,
-                args=(title, message),
-                kwargs={'duration': duration, 'threaded': True},
-                daemon=True
-            )
-            thread.start()
+            self.notifier.show_toast(title, message, duration=duration, threaded=False)
             return True
         except Exception as e:
             print(f"Notification error: {e}")

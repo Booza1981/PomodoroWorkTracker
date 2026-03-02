@@ -147,6 +147,11 @@ class PomodoroCLI:
                 recent_tasks = task_manager.get_recent_tasks(10)
                 task_idx = ui.prompt_task_selection(recent_tasks)
 
+                if task_idx == -2:
+                    # Allow quitting directly from setup prompts.
+                    self.running = False
+                    return
+
                 if task_idx == -1:
                     # Create new task
                     task_data = ui.prompt_create_task()

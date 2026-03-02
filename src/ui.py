@@ -247,7 +247,7 @@ def prompt_task_selection(tasks: List[Task], allow_new: bool = True, allow_none:
         allow_none: Allow selecting no task (ad-hoc work)
 
     Returns:
-        Selected task index, -1 for new task, None for no task
+        Selected task index, -1 for new task, -2 for quit, None for no task
     """
     if not tasks and not allow_new:
         return None
@@ -289,6 +289,9 @@ def prompt_task_selection(tasks: List[Task], allow_new: bool = True, allow_none:
 
         if not choice and allow_none:
             return None
+
+        if choice in ['quit', 'exit', 'q']:
+            return -2
 
         if choice == 'n' and allow_new:
             return -1
