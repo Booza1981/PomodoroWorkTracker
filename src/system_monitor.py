@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 from typing import Optional, Callable
 import platform
-import sys
 
 
 class IdleMonitor:
@@ -76,18 +75,10 @@ class WindowsNotifier:
         if platform.system() != 'Windows':
             return
 
-        # win10toast relies on an old ctypes callback path that can emit
-        # WNDPROC/LRESULT type errors on newer Python releases.
-        # In that case, disable toast notifications instead of crashing output.
-        if sys.version_info >= (3, 12):
-            return
-
-        try:
-            from win10toast import ToastNotifier
-            self.notifier = ToastNotifier()
-        except ImportError:
-            # win10toast not available, will skip notifications
-            pass
+        # Disabled by default because win10toast can emit noisy ctypes callback
+        # errors (startWNDPROC / LRESULT / WPARAM) in some Python+Windows combos.
+        # Keep taskbar flashing as the attention mechanism.
+        return
 
     def show_notification(self, title: str, message: str, duration: int = 10):
         """
