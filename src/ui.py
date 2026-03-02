@@ -809,6 +809,7 @@ def display_task_list(tasks: List[Task]):
         return
 
     table = Table(title="All Tasks", show_header=True, box=box.ROUNDED)
+    table.add_column("ID", style="magenta", width=6)
     table.add_column("Quick Ref", style="cyan")
     table.add_column("Name", style="white")
     table.add_column("Source", style="dim")
@@ -828,6 +829,7 @@ def display_task_list(tasks: List[Task]):
                 last_worked = f"{delta.days}d ago"
 
         table.add_row(
+            str(task.id) if task.id is not None else "-",
             task.quick_ref or "-",
             task.name,
             task.source or "-",

@@ -92,6 +92,10 @@ class PomodoroCLI:
         task_search_parser.add_argument('term', help='Search term')
         task_search_parser.set_defaults(func=self.cmd_task_search)
 
+        task_delete_parser = task_subparsers.add_parser('delete', help='Delete a task')
+        task_delete_parser.add_argument('ref', help='Task quick reference or ID')
+        task_delete_parser.set_defaults(func=self.cmd_task_delete)
+
         # Report commands
         report_parser = subparsers.add_parser('report', help='Generate reports')
         report_subparsers = report_parser.add_subparsers(title='report commands', dest='report_command')
@@ -424,6 +428,58 @@ class PomodoroCLI:
             return
 
         ui.display_task_list(tasks)
+
+    def cmd_task_delete(self, args):
+        """Delete a task by quick reference or ID"""
+        task = task_manager.get_task_by_quick_ref(args.ref)
+
+        if not task:
+            try:
+                task_id = int(args.ref)
+                task = task_manager.get_task(task_id)
+            except ValueError:
+                pass
+
+        # Fallback: allow deleting by exact task name if no quick_ref/ID match.
+        if not task:
+            matches = task_manager.search_tasks(args.ref)
+            exact_matches = [t for t in matches if t.name.strip().lower() == args.ref.strip().lower()]
+
+            if len(exact_matches) == 1:
+                task = exact_matches[0]
+            elif len(exact_matches) > 1:
+                ui.print_error("Multiple tasks have that exact name. Use task ID from 'task list'.")
+                for t in exact_matches:
+                    console.print(f"  id={t.id}  quick_ref={t.quick_ref or '-'}  name={t.name}")
+                return
+
+        if not task:
+            ui.print_error(f"Task not found: {args.ref}")
+            return
+
+        resource_count_row = db.fetch_one(
+            "SELECT COUNT(*) AS count FROM task_resources WHERE task_id = ?",
+            (task.id,)
+        )
+        linked_sessions_row = db.fetch_one(
+            "SELECT COUNT(*) AS count FROM sessions WHERE task_id = ?",
+            (task.id,)
+        )
+
+        resource_count = resource_count_row['count'] if resource_count_row else 0
+        linked_sessions = linked_sessions_row['count'] if linked_sessions_row else 0
+
+        console.print("\n[bold yellow]Delete task?[/bold yellow]")
+        console.print(f"  Task: {task.display_name()} (id={task.id})")
+        console.print(f"  Resources to delete: {resource_count}")
+        console.print(f"  Linked sessions kept: {linked_sessions} (task link will be removed)")
+
+        if not Confirm.ask("Proceed with deletion?", default=False):
+            ui.print_info("Cancelled")
+            return
+
+        task_manager.delete_task(task.id)
+        ui.print_success(f"Deleted task: {task.display_name()}")
 
     def cmd_report_today(self, args):
         """Show today's report"""
@@ -865,6 +921,7 @@ class PomodoroCLI:
   task add           Create new task (interactive)
   task show <ref>    Show task details and history
   task search <term> Search tasks
+  task delete <ref>  Delete task (keeps session history)
 
 [bold]Reporting:[/bold]
   report today       Today's work summary
